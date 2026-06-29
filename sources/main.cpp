@@ -1,5 +1,10 @@
 #include <Arduino.h>
 #include <SPI.h>
+#include <HardwareSerial.h>
+
+#ifndef RGB_BUILTIN
+#define RGB_BUILTIN 48 // Onboard RGB LED on ESP32-S3 DevKitC-1
+#endif
 
 // --- Pin Definitions (Adjust to match your PCB layout) ---
 #define MCP_INT_PIN   10  // Top signal pin on header -> GPIO 10
@@ -161,7 +166,30 @@ void setup()
     SPI.transfer(0x00); // CANCTRL: Normal Mode, CLKOUT disabled
     digitalWrite(MCP_CS_PIN, HIGH);
 
+    // 5. Verify Setup was successful by checking if MCP2515 is accessible
+    // Read the CANCTRL register to check if it has successfully transitioned to Normal Mode (0x00)
+    digitalWrite(MCP_CS_PIN, LOW);
+    SPI.transfer(0x03); // READ Command
+    SPI.transfer(REG_CANCTRL);
+    uint8_t mode = SPI.transfer(0x00);
+    digitalWrite(MCP_CS_PIN, HIGH);
+
     SPI.endTransaction();
+
+    if ((mode & 0xE0) == 0x00) // Mode bits OPMOD2:OPMOD0 should be 0b000 for normal mode
+    {
+        Serial.println("MCP2515 Initialized Successfully! Steady Green LED ON.");
+        neopixelWrite(RGB_BUILTIN, 0, 255, 0); // Steady Green
+    }
+    else
+    {
+        Serial.printf("MCP2515 Initialization Failed (Returned Mode: 0x%02X). Steady Red LED ON.\n", mode);
+        neopixelWrite(RGB_BUILTIN, 255, 0, 0); // Steady Red
+        while (1) 
+        {
+            delay(1000);
+        }
+    }
 
     // Create the dedicated CAN handling task on Core 1 with maximum priority
     xTaskCreatePinnedToCore
@@ -185,11 +213,17 @@ void loop()
     // Process the data down here safely without slowing down the critical hardware SPI loop
     if (xQueueReceive(CanRxQueue, &currentMsg, portMAX_DELAY)) 
     {
+        // Blink blue on message receive
+        neopixelWrite(RGB_BUILTIN, 0, 0, 255);
+
         Serial.printf("CAN MSG BEGIN - ID %x : DATA", currentMsg.id);
         for (int i = 0; i < currentMsg.dlc; i++) 
         {
             Serial.printf(" %02x", currentMsg.data[i]);
         }
         Serial.println(" - END");
+
+        delay(30);
+        neopixelWrite(RGB_BUILTIN, 0, 255, 0); // Return to steady green
     }
 }
